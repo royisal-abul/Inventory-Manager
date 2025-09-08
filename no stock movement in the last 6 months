@@ -1,0 +1,35 @@
+-- Purchasable products with no movement in the last 6 months
+-- Set :company_id if you want to filter by company; leave NULL to include all
+WITH last_moves AS (
+  SELECT sm.product_id, MAX(sm.date) AS last_move_date
+  FROM stock_move sm
+  WHERE sm.state = 'done'
+  GROUP BY sm.product_id
+),
+onhand AS (
+  SELECT sq.product_id,
+         SUM(sq.quantity) AS qty_in_quants,
+         SUM(sq.quantity - sq.reserved_quantity) AS qty_available
+  FROM stock_quant sq
+    GROUP BY sq.product_id
+)
+SELECT
+  pp.id                              AS product_id,
+  pp.default_code                    AS internal_ref,
+  pt.name                            AS product_name,
+  pt.type                            AS product_type,
+  lm.last_move_date,
+  COALESCE(o.qty_available, 0)       AS qty_available,
+  COALESCE(o.qty_in_quants, 0)       AS qty_in_quants
+FROM product_product pp
+JOIN product_template pt   ON pt.id = pp.product_tmpl_id
+LEFT JOIN last_moves lm    ON lm.product_id = pp.id
+LEFT JOIN onhand o         ON o.product_id = pp.id
+WHERE pt.active = TRUE
+  AND pt.purchase_ok = TRUE              -- purchasable
+  AND pt.type IN ('product','consu')     -- storable/consumable (adjust if needed)
+  AND (
+        lm.last_move_date IS NULL
+        OR lm.last_move_date < (NOW() AT TIME ZONE 'UTC') - INTERVAL '6 months'
+      )
+ORDER BY lm.last_move_date NULLS FIRST, pp.default_code;
